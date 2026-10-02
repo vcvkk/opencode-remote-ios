@@ -23,8 +23,7 @@ import UIKit
 /// macOS has no use for any of this — the Mac half of a pairing renders a QR
 /// code instead of scanning one — so the whole view is compiled only where
 /// UIKit exists.
-#if os(iOS)
-public struct PairingScannerView: View {
+public struct IOSPairingScannerView: View {
     @ObservedObject var session: PairingSession
     @StateObject private var photoPicker = PhotoPicker()
 
@@ -37,6 +36,7 @@ public struct PairingScannerView: View {
         self.session = session
     }
 
+    @available(iOS 16.0, *)
     public var body: some View {
         VStack(spacing: 16) {
             header
@@ -64,6 +64,33 @@ public struct PairingScannerView: View {
         .padding()
     }
 
+    @ViewBuilder
+    @available(iOS 16.0, *)
+    private var cameraArea: some View {
+        if QRScannerController.isSupported {
+            QRScannerRepresentable(onScan: handle, onFailure: { errorText = $0 })
+                .frame(maxWidth: 320, maxHeight: 380)
+                .clipShape(.rect(cornerRadius: 16))
+        } else {
+            stillPhotoFallback
+        }
+    }
+
+    @available(iOS 16.0, *)
+    private var stillPhotoFallback: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "photo.viewfinder")
+                .font(.system(size: 46))
+                .foregroundStyle(.secondary)
+            Text("This device has no live QR scanner. Photograph the code instead.")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+                .font(.callout)
+            Button("Choose Photo") { choosePhoto() }
+                .buttonStyle(.borderedProminent)
+        }
+    }
+
     private var header: some View {
         VStack(spacing: 6) {
             Image(systemName: "qrcode.viewfinder")
@@ -85,27 +112,6 @@ public struct PairingScannerView: View {
             Button("Open Camera") { showsCamera = true }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
-        }
-    }
-
-    @ViewBuilder
-    private var cameraArea: some View {
-        if QRScannerController.isSupported {
-            QRScannerRepresentable(onScan: handle, onFailure: { errorText = $0 })
-                .frame(maxWidth: 320, maxHeight: 380)
-                .clipShape(.rect(cornerRadius: 16))
-        } else {
-            VStack(spacing: 12) {
-                Image(systemName: "photo.viewfinder")
-                    .font(.system(size: 46))
-                    .foregroundStyle(.secondary)
-                Text("This device has no live QR scanner. Photograph the code instead.")
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-                    .font(.callout)
-                Button("Choose Photo") { choosePhoto() }
-                    .buttonStyle(.borderedProminent)
-            }
         }
     }
 
@@ -298,4 +304,3 @@ extension PhotoPicker: UIImagePickerControllerDelegate, UINavigationControllerDe
         picker.dismiss(animated: true)
     }
 }
-#endif
