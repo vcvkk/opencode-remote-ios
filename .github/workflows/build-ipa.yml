@@ -61,19 +61,22 @@ jobs:
       - name: Package unsigned IPA
         run: |
           set -euo pipefail
-          APP="$RUNNER_TEMP/dd/Build/Products/Release-iphoneos/Remote for OpenCode.app"
-          if [ ! -d "$APP" ]; then
-            echo "app not found at: $APP"
-            find "$RUNNER_TEMP/dd/Build/Products" -maxdepth 2 -name '*.app'
+          # The product is named after the target (Phone.app); CFBundleDisplayName
+          # only changes what the Home screen shows. Pick whatever .app landed
+          # rather than hardcoding, so a rename upstream cannot break packaging.
+          APP="$(find "$RUNNER_TEMP/dd/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' | head -1)"
+          if [ -z "$APP" ]; then
+            echo "no .app under Release-iphoneos"
             exit 1
           fi
+          echo "packaging: $APP"
           STAGE="$RUNNER_TEMP/ipa"
           mkdir -p "$STAGE/Payload"
           cp -R "$APP" "$STAGE/Payload/"
-          # An unsigned .app keeps no _CodeSignature; zsign writes it locally.
-          rm -rf "$STAGE/Payload/Remote for OpenCode.app/_CodeSignature"
+          # An unsigned build keeps no _CodeSignature; zsign writes it locally.
+          rm -rf "$STAGE/Payload/$(basename "$APP")/_CodeSignature"
           (cd "$STAGE" && zip -qry "$RUNNER_TEMP/RemoteForOpenCode-unsigned.ipa" Payload)
-          ls -la "$RUNNER_TEMP/RemoteForOpenCode-unsigned.ipa"
+          unzip -l "$RUNNER_TEMP/RemoteForOpenCode-unsigned.ipa" | head -5
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
