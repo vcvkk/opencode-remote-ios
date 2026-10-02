@@ -376,6 +376,12 @@ public final class CompanionLink {
                     finish()
                     return
                 }
+                // The public half rides along so a companion that minted its
+                // own side of the pairing can compute the same channel key.
+                // Absent only if the keychain is unreadable, which leaves the
+                // handshake exactly as it was before QR pairing.
+                let ownPublicKey = try? PairingKeyStore.agreementKey()
+                    .publicKey.rawRepresentation
                 let auth = Wire.Auth(
                     name: deviceName,
                     nonce: clientNonce,
@@ -383,7 +389,8 @@ public final class CompanionLink {
                         channelKey: channelKey, serverNonce: serverNonce,
                         clientNonce: clientNonce, name: deviceName
                     ),
-                    compress: true
+                    compress: true,
+                    pubKey: ownPublicKey
                 )
                 guard var data = try? JSONEncoder().encode(auth) else { return }
                 data.append(0x0A)

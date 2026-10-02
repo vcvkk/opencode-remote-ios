@@ -114,6 +114,16 @@ public enum Wire {
     }
 
     /// Client's answer to the server's challenge.
+    ///
+    /// `pubKey` is an addition to the original shape, and it exists because
+    /// QR pairing replaced the CloudKit rendezvous. The channel key is an ECDH
+    /// between two *static* keys, so a peer that mints its own side of that
+    /// exchange — a Linux companion with no shared iCloud account — has no
+    /// other way to learn the phone's public half. Sending it here, in the
+    /// frame that already proves possession of the channel key, keeps the
+    /// handshake to one step. It is optional so an older companion that
+    /// learned the key the CloudKit way still validates: it simply ignores a
+    /// field it did not ask for.
     public struct Auth: Codable {
         public var kind: String = "auth"
         public var name: String
@@ -121,12 +131,18 @@ public enum Wire {
         public var tag: String
         /// True when this client can read Squeeze-compressed frames.
         public var compress: Bool?
+        /// This device's Curve25519 agreement public key, raw representation.
+        public var pubKey: Data?
 
-        public init(name: String, nonce: String, tag: String, compress: Bool? = nil) {
+        public init(
+            name: String, nonce: String, tag: String,
+            compress: Bool? = nil, pubKey: Data? = nil
+        ) {
             self.name = name
             self.nonce = nonce
             self.tag = tag
             self.compress = compress
+            self.pubKey = pubKey
         }
     }
 

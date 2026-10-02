@@ -97,4 +97,8 @@ jobs:
 
       - name: Run RemoteKit tests
         working-directory: packages/RemoteKit
-        run: swift test 2>&1 | tail -40
+        # No `| tail` here: piping hides the exit status, which is how a
+        # failing test run came back green. Capture and print, keep the code.
+        run: |
+          set -o pipefail
+          swift test 2>&1 | tee /tmp/test.log | tail -60
