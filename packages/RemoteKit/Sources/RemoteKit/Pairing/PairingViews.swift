@@ -25,10 +25,19 @@ public struct PairingPhaseView: View {
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
             case .waitingForPeer:
-                // The scanner owns this phase: it has its own framing, so it
-                // renders in place of the default VStack padding.
+                // The scanner owns this phase on the platforms that have a
+                // camera. The Mac half of a pairing renders a code rather
+                // than scanning one, so it keeps the plain instruction.
+                #if canImport(UIKit)
                 QRScannerView(session: session)
-                    .padding(.horizontal, -20)
+                #else
+                Image(systemName: "qrcode.viewfinder")
+                    .font(.largeTitle)
+                Text("Show this Mac\u{2019}s pairing code on your \(session.peerNoun).")
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
+                    .font(.callout)
+                #endif
             case let .peerFound(name, sas):
                 sasBlock(sas)
                 Text("Found **\(name)**. Make sure it shows this same code, then approve on both devices.")

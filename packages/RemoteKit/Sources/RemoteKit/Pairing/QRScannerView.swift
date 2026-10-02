@@ -13,21 +13,25 @@ import UIKit
 /// which is the only thing that mutates the peer list. Keeping detection
 /// here and adoption there means the session stays testable without a camera.
 ///
-/// Two fallbacks matter. `DataScannerViewController` is unavailable on the
-/// simulator and on devices where it is unsupported, so scanning is offered
-/// through Vision's own `VNDetectBarcodesRequest` on a still frame — slower,
-/// but works on the iOS 17 floor this app targets. And if the camera is
-/// denied or absent altogether, a plain text field accepts a pasted code,
-/// because someone pairing over SSH should not be locked out by a camera.
+/// Two fallbacks matter. `DataScannerViewController` is unsupported on the
+/// simulator and on some devices, so scanning is also offered through
+/// Vision's `VNDetectBarcodesRequest` over a still photo. And if the camera
+/// is denied or absent altogether, a plain text field accepts a pasted
+/// code, because someone pairing over SSH should not be locked out by a
+/// camera permission.
+///
+/// macOS has no use for any of this — the Mac half of a pairing renders a QR
+/// code instead of scanning one — so the whole view is compiled only where
+/// UIKit exists.
+#if canImport(UIKit)
 public struct PairingScannerView: View {
     @ObservedObject var session: PairingSession
+    @StateObject private var photoPicker = PhotoPicker()
 
     @State private var showsCamera = false
     @State private var pastedCode = ""
     @State private var showsPasteField = false
     @State private var errorText: String?
-    /// Holds the image picker alive while its sheet is up.
-    @State private var presented: AnyObject?
 
     public init(session: PairingSession) {
         self.session = session
@@ -91,8 +95,6 @@ public struct PairingScannerView: View {
                 .frame(maxWidth: 320, maxHeight: 380)
                 .clipShape(.rect(cornerRadius: 16))
         } else {
-            // No VisionKit scanner here: ask for a still photo instead. Same
-            // Vision barcode request, driven by the user's own picker.
             VStack(spacing: 12) {
                 Image(systemName: "photo.viewfinder")
                     .font(.system(size: 46))
@@ -155,57 +157,53 @@ public struct PairingScannerView: View {
         }
     }
 
-    #if canImport(UIKit)
     private func choosePhoto() {
         guard let root = Self.topViewController() else {
             errorText = "Cannot open the photo picker right now."
             return
         }
-        // The picker is retained for the life of the sheet by `presented`.
-        @MainActor var picker: PhotoPicker?
-        picker = PhotoPicker { image in
+        photoPicker.onPick = { image in
             guard let image else { return }
             QRScannerController.detect(in: image) { text in
                 if let text { handle(text) } else {
                     errorText = "No pairing code found in that photo."
                 }
             }
-            picker = nil
         }
-        presented = picker
-        picker?.present(from: root)
+        photoPicker.present(from: root)
     }
 
-    /// UIApplication has no "top controller" accessor, so walk from the
-    /// key window and follow whatever modal is already up.
+    /// UIApplication has no "top controller" accessor, so start at the key
+    /// window and follow whatever modal is already up.
     private static func topViewController() -> UIViewController? {
-        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let scenes = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
         let window = scenes.flatMap(\.windows).first { $0.isKeyWindow }
             ?? scenes.flatMap(\.windows).first
         var top = window?.rootViewController
         while let presented = top?.presentedViewController { top = presented }
         return top
     }
-    #endif
 }
 
-// MARK: - VisionKit scanner
-
-/// `DataScannerViewController` needs a real delegate object; a `UIViewController`
-/// subclass is the least ceremony that keeps it alive.
-#if canImport(UIKit)
+/// The live scanner. VisionKit wants a delegate object; a `UIViewController`
+/// subclass is the least ceremony that keeps one alive.
 enum QRScannerController {
+    /// Main-actor because VisionKit's own `isSupported`/`isAvailable` are.
+    @MainActor
     static var isSupported: Bool {
         DataScannerViewController.isSupported && DataScannerViewController.isAvailable
     }
 
-    /// Scan a still image — the fallback when live scanning is unavailable.
+    /// Scan a still image — the fallback where live scanning is unavailable.
+    /// Only `.qr` is requested, so every observation that comes back is one.
+    @MainActor
     static func detect(in image: UIImage, completion: @escaping (String?) -> Void) {
         guard let cgImage = image.cgImage else { return completion(nil) }
         let request = VNDetectBarcodesRequest { request, _ in
             let text = (request.results as? [VNBarcodeObservation])?
-                .first { $0.symbologies.contains(.qr) }?
-                .payloadStringValue
+                .compactMap(\.payloadStringValue)
+                .first
             completion(text)
         }
         request.symbologies = [.qr]
@@ -248,8 +246,8 @@ struct QRScannerRepresentable: UIViewControllerRepresentable {
             _ scanner: DataScannerViewController, didAdd addedItems: [RecognizedItem],
             allItems: [RecognizedItem]
         ) {
-            // Only the first code counts: a frame can contain several, and
-            // re-delivering would re-run the pairing.
+            // Only the first code counts: a frame can hold several, and
+            // re-delivering would run the pairing twice.
             guard !delivered else { return }
             for item in addedItems {
                 guard case let .barcode(barcode) = item,
@@ -263,30 +261,25 @@ struct QRScannerRepresentable: UIViewControllerRepresentable {
         }
 
         func dataScanner(
-            _ scanner: DataScannerViewController, becameUnavailableWithError error: DataScannerViewController.ScanningUnavailable
+            _ scanner: DataScannerViewController,
+            becameUnavailableWithError error: DataScannerViewController.ScanningUnavailable
         ) {
             onFailure("The camera is unavailable: \(error.localizedDescription)")
         }
     }
 }
 
-/// Retains itself for the life of the sheet: an image picker deallocated on
-/// the next runloop turn never appears, so the presenting view holds a
-/// reference until the delegate fires.
-final class PhotoPicker: NSObject {
-    private let completion: (UIImage?) -> Void
-    private let picker: UIImagePickerController
+/// Retained by `@StateObject` for the life of the view: an image picker
+/// deallocated on the next runloop turn never appears on screen.
+final class PhotoPicker: NSObject, ObservableObject {
+    /// Set by the caller just before presenting.
+    @MainActor var onPick: ((UIImage?) -> Void)?
 
-    init(completion: @escaping (UIImage?) -> Void) {
-        self.completion = completion
-        self.picker = UIImagePickerController()
-        super.init()
+    @MainActor
+    func present(from root: UIViewController) {
+        let picker = UIImagePickerController()
         picker.sourceType = .photoLibrary
         picker.delegate = self
-    }
-
-    /// Hand the controller to a view controller to present.
-    func present(from root: UIViewController) {
         root.present(picker, animated: true)
     }
 }
@@ -298,7 +291,7 @@ extension PhotoPicker: UIImagePickerControllerDelegate, UINavigationControllerDe
     ) {
         let image = info[.originalImage] as? UIImage
         picker.dismiss(animated: true)
-        completion?(image)
+        onPick?(image)
     }
 
     func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
