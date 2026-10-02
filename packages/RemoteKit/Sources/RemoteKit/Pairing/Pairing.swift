@@ -465,12 +465,13 @@ public final class PairingSession: ObservableObject {
         if case .paired = phase {} else { phase = .idle }
     }
 
+    /// Kept for the SAS approval screen. Nothing to publish any more, so
+    /// this only advances the local phase machine.
     public func approve() {
         approvedLocally = true
         if case let .peerFound(name, sas) = phase {
             phase = .waitingForPeerApproval(name: name, sas: sas)
         }
-        Task { try? await publishSelf() }
     }
 
     /// Forget one paired peer and remove its rendezvous state. Removing the
