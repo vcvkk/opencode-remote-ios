@@ -28,7 +28,7 @@ public struct PairingPhaseView: View {
                 // The scanner owns this phase on the platforms that have a
                 // camera. The Mac half of a pairing renders a code rather
                 // than scanning one, so it keeps the plain instruction.
-                #if canImport(UIKit)
+                #if os(iOS)
                 QRScannerView(session: session)
                 #else
                 Image(systemName: "qrcode.viewfinder")

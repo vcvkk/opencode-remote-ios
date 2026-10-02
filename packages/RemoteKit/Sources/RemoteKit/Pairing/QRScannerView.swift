@@ -2,7 +2,7 @@ import SwiftUI
 import Vision
 import VisionKit
 
-#if canImport(UIKit)
+#if os(iOS)
 import UIKit
 #endif
 
@@ -23,7 +23,7 @@ import UIKit
 /// macOS has no use for any of this — the Mac half of a pairing renders a QR
 /// code instead of scanning one — so the whole view is compiled only where
 /// UIKit exists.
-#if canImport(UIKit)
+#if os(iOS)
 public struct PairingScannerView: View {
     @ObservedObject var session: PairingSession
     @StateObject private var photoPicker = PhotoPicker()

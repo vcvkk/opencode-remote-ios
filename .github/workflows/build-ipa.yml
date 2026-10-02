@@ -84,3 +84,17 @@ jobs:
           name: RemoteForOpenCode-unsigned
           path: ${{ runner.temp }}/RemoteForOpenCode-unsigned.ipa
           if-no-files-found: error
+
+  test:
+    # The QR payload is the entire pairing handshake now that CloudKit is
+    # gone, so its round trip is pinned by tests rather than by eye.
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.6.app
+
+      - name: Run RemoteKit tests
+        working-directory: packages/RemoteKit
+        run: swift test 2>&1 | tail -40
