@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Release entitlements. Identical to the generated Debug set except for
+  aps-environment, which MUST be production in a store or TestFlight build:
+  a development APNs token is rejected by the production gateway, so push
+  fails silently.
+
+  The iCloud keys are gone in this build: CloudKit was removed and pairing
+  is a QR handshake over LAN. Keeping the container identifiers would force
+  signing to present an entitlement for a container we do not own.
+-->
+<plist version="1.0">
+<dict>
+	<key>aps-environment</key>
+	<string>production</string>
+</dict>
+</plist>

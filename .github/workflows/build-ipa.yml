@@ -1,0 +1,83 @@
+name: Build unsigned IPA
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    # macOS 26 ships Xcode 26.x and the iOS 26.5 SDK — stable, and safe to
+    # build against for a device on a newer iOS beta.
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.6.app
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        working-directory: app
+        run: xcodegen generate
+
+      - name: Build unsigned IPA
+        working-directory: app
+        env:
+          MARKETING_VERSION: 1.0.0
+          CURRENT_PROJECT_VERSION: 1
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project RemoteForOpenCode.xcodeproj \
+            -scheme Phone \
+            -sdk iphoneos \
+            -configuration Release \
+            -derivedDataPath "$RUNNER_TEMP/dd" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            MARKETING_VERSION="$MARKETING_VERSION" \
+            CURRENT_PROJECT_VERSION="$CURRENT_PROJECT_VERSION" \
+            build | xcbeautify || \
+          xcodebuild \
+            -project RemoteForOpenCode.xcodeproj \
+            -scheme Phone \
+            -sdk iphoneos \
+            -configuration Release \
+            -derivedDataPath "$RUNNER_TEMP/dd" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            MARKETING_VERSION="$MARKETING_VERSION" \
+            CURRENT_PROJECT_VERSION="$CURRENT_PROJECT_VERSION" \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/dd/Build/Products/Release-iphoneos/Remote for OpenCode.app"
+          if [ ! -d "$APP" ]; then
+            echo "app not found at: $APP"
+            find "$RUNNER_TEMP/dd/Build/Products" -maxdepth 2 -name '*.app'
+            exit 1
+          fi
+          STAGE="$RUNNER_TEMP/ipa"
+          mkdir -p "$STAGE/Payload"
+          cp -R "$APP" "$STAGE/Payload/"
+          # An unsigned .app keeps no _CodeSignature; zsign writes it locally.
+          rm -rf "$STAGE/Payload/Remote for OpenCode.app/_CodeSignature"
+          (cd "$STAGE" && zip -qry "$RUNNER_TEMP/RemoteForOpenCode-unsigned.ipa" Payload)
+          ls -la "$RUNNER_TEMP/RemoteForOpenCode-unsigned.ipa"
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: RemoteForOpenCode-unsigned
+          path: ${{ runner.temp }}/RemoteForOpenCode-unsigned.ipa
+          if-no-files-found: error
