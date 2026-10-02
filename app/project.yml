@@ -137,8 +137,9 @@ targets:
         # goes to your own Mac and nowhere else. The photo library needs no
         # entry — the system picker runs out of process.
         NSCameraUsageDescription: >-
-          Remote for OpenCode uses the camera so you can send your agent a photo —
-          a screenshot, a diagram, an error on another screen.
+          Remote for OpenCode uses the camera to scan the pairing code shown on
+          your other device, and to send your agent a photo — a screenshot, a
+          diagram, an error on another screen.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.timwilliams.opencodego.ios

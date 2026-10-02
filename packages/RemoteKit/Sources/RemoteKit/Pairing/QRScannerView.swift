@@ -1,0 +1,308 @@
+import SwiftUI
+import Vision
+import VisionKit
+
+#if canImport(UIKit)
+import UIKit
+#endif
+
+/// Camera scanner for the pairing code.
+///
+/// VisionKit's `DataScannerViewController` does the QR detection on-device
+/// and hands back the raw string; we hand that to `PairingSession.adopt`,
+/// which is the only thing that mutates the peer list. Keeping detection
+/// here and adoption there means the session stays testable without a camera.
+///
+/// Two fallbacks matter. `DataScannerViewController` is unavailable on the
+/// simulator and on devices where it is unsupported, so scanning is offered
+/// through Vision's own `VNDetectBarcodesRequest` on a still frame — slower,
+/// but works on the iOS 17 floor this app targets. And if the camera is
+/// denied or absent altogether, a plain text field accepts a pasted code,
+/// because someone pairing over SSH should not be locked out by a camera.
+public struct PairingScannerView: View {
+    @ObservedObject var session: PairingSession
+
+    @State private var showsCamera = false
+    @State private var pastedCode = ""
+    @State private var showsPasteField = false
+    @State private var errorText: String?
+    /// Holds the image picker alive while its sheet is up.
+    @State private var presented: AnyObject?
+
+    public init(session: PairingSession) {
+        self.session = session
+    }
+
+    public var body: some View {
+        VStack(spacing: 16) {
+            header
+
+            if showsCamera {
+                cameraArea
+            } else {
+                idleArea
+            }
+
+            if let errorText {
+                Text(errorText)
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+            }
+
+            if showsPasteField {
+                pasteField
+            }
+
+            secondaryActions
+        }
+        .frame(maxWidth: 420)
+        .padding()
+    }
+
+    private var header: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "qrcode.viewfinder")
+                .font(.largeTitle)
+            Text("Scan the code on your \(session.peerNoun)")
+                .font(.headline)
+            Text("Your \(session.peerNoun) shows a pairing code. Point the camera at it — the devices link directly over your network, no account needed.")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+                .font(.callout)
+        }
+    }
+
+    private var idleArea: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "camera.viewfinder")
+                .font(.system(size: 46))
+                .foregroundStyle(.secondary)
+            Button("Open Camera") { showsCamera = true }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+        }
+    }
+
+    @ViewBuilder
+    private var cameraArea: some View {
+        if QRScannerController.isSupported {
+            QRScannerRepresentable(onScan: handle, onFailure: { errorText = $0 })
+                .frame(maxWidth: 320, maxHeight: 380)
+                .clipShape(.rect(cornerRadius: 16))
+        } else {
+            // No VisionKit scanner here: ask for a still photo instead. Same
+            // Vision barcode request, driven by the user's own picker.
+            VStack(spacing: 12) {
+                Image(systemName: "photo.viewfinder")
+                    .font(.system(size: 46))
+                    .foregroundStyle(.secondary)
+                Text("This device has no live QR scanner. Photograph the code instead.")
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
+                    .font(.callout)
+                Button("Choose Photo") { choosePhoto() }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+    }
+
+    private var pasteField: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Or paste the code")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            TextField("RFOC1.…", text: $pastedCode, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.footnote, design: .monospaced))
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+            Button("Pair") { handle(pastedCode) }
+                .buttonStyle(.bordered)
+                .disabled(pastedCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+    }
+
+    private var secondaryActions: some View {
+        HStack(spacing: 12) {
+            if showsCamera {
+                Button("Close Camera") { showsCamera = false }
+            }
+            Button(showsPasteField ? "Hide Paste" : "Paste Code Instead") {
+                showsPasteField.toggle()
+            }
+        }
+        .font(.callout)
+        .buttonStyle(.borderless)
+    }
+
+    /// Parse and adopt. A malformed code is reported on the screen rather
+    /// than thrown away — a mis-transcribed character is common enough with
+    /// a long base64 payload that retrying beats re-scanning.
+    private func handle(_ text: String) {
+        do {
+            let payload = try PairingSession.QRPairPayload.decode(text)
+            guard payload.role == session.peerRole else {
+                errorText = "That code is for a \(payload.role.noun.lowercased()), not a \(session.peerNoun.lowercased())."
+                return
+            }
+            errorText = nil
+            pastedCode = ""
+            showsCamera = false
+            session.adopt(qr: payload)
+        } catch {
+            errorText = "That code did not read. Scan it again, or paste it in full."
+        }
+    }
+
+    #if canImport(UIKit)
+    private func choosePhoto() {
+        guard let root = Self.topViewController() else {
+            errorText = "Cannot open the photo picker right now."
+            return
+        }
+        // The picker is retained for the life of the sheet by `presented`.
+        @MainActor var picker: PhotoPicker?
+        picker = PhotoPicker { image in
+            guard let image else { return }
+            QRScannerController.detect(in: image) { text in
+                if let text { handle(text) } else {
+                    errorText = "No pairing code found in that photo."
+                }
+            }
+            picker = nil
+        }
+        presented = picker
+        picker?.present(from: root)
+    }
+
+    /// UIApplication has no "top controller" accessor, so walk from the
+    /// key window and follow whatever modal is already up.
+    private static func topViewController() -> UIViewController? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let window = scenes.flatMap(\.windows).first { $0.isKeyWindow }
+            ?? scenes.flatMap(\.windows).first
+        var top = window?.rootViewController
+        while let presented = top?.presentedViewController { top = presented }
+        return top
+    }
+    #endif
+}
+
+// MARK: - VisionKit scanner
+
+/// `DataScannerViewController` needs a real delegate object; a `UIViewController`
+/// subclass is the least ceremony that keeps it alive.
+#if canImport(UIKit)
+enum QRScannerController {
+    static var isSupported: Bool {
+        DataScannerViewController.isSupported && DataScannerViewController.isAvailable
+    }
+
+    /// Scan a still image — the fallback when live scanning is unavailable.
+    static func detect(in image: UIImage, completion: @escaping (String?) -> Void) {
+        guard let cgImage = image.cgImage else { return completion(nil) }
+        let request = VNDetectBarcodesRequest { request, _ in
+            let text = (request.results as? [VNBarcodeObservation])?
+                .first { $0.symbologies.contains(.qr) }?
+                .payloadStringValue
+            completion(text)
+        }
+        request.symbologies = [.qr]
+        let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up)
+        try? handler.perform([request])
+    }
+}
+
+struct QRScannerRepresentable: UIViewControllerRepresentable {
+    let onScan: (String) -> Void
+    let onFailure: (String) -> Void
+
+    func makeUIViewController(context: Context) -> DataScannerViewController {
+        let controller = DataScannerViewController(
+            recognizedDataTypes: [.barcode(symbologies: [.qr])],
+            qualityLevel: .balanced,
+            recognizesMultipleItems: false,
+            isHighFrameRateTrackingEnabled: false,
+            isHighlightingEnabled: true
+        )
+        controller.delegate = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ controller: DataScannerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(onScan: onScan, onFailure: onFailure) }
+
+    final class Coordinator: NSObject, DataScannerViewControllerDelegate {
+        private let onScan: (String) -> Void
+        private let onFailure: (String) -> Void
+        private var delivered = false
+
+        init(onScan: @escaping (String) -> Void, onFailure: @escaping (String) -> Void) {
+            self.onScan = onScan
+            self.onFailure = onFailure
+        }
+
+        func dataScanner(
+            _ scanner: DataScannerViewController, didAdd addedItems: [RecognizedItem],
+            allItems: [RecognizedItem]
+        ) {
+            // Only the first code counts: a frame can contain several, and
+            // re-delivering would re-run the pairing.
+            guard !delivered else { return }
+            for item in addedItems {
+                guard case let .barcode(barcode) = item,
+                      let payload = barcode.payloadStringValue
+                else { continue }
+                delivered = true
+                scanner.stopScanning()
+                onScan(payload)
+                return
+            }
+        }
+
+        func dataScanner(
+            _ scanner: DataScannerViewController, becameUnavailableWithError error: DataScannerViewController.ScanningUnavailable
+        ) {
+            onFailure("The camera is unavailable: \(error.localizedDescription)")
+        }
+    }
+}
+
+/// Retains itself for the life of the sheet: an image picker deallocated on
+/// the next runloop turn never appears, so the presenting view holds a
+/// reference until the delegate fires.
+final class PhotoPicker: NSObject {
+    private let completion: (UIImage?) -> Void
+    private let picker: UIImagePickerController
+
+    init(completion: @escaping (UIImage?) -> Void) {
+        self.completion = completion
+        self.picker = UIImagePickerController()
+        super.init()
+        picker.sourceType = .photoLibrary
+        picker.delegate = self
+    }
+
+    /// Hand the controller to a view controller to present.
+    func present(from root: UIViewController) {
+        root.present(picker, animated: true)
+    }
+}
+
+extension PhotoPicker: UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+    func imagePickerController(
+        _ picker: UIImagePickerController,
+        didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
+    ) {
+        let image = info[.originalImage] as? UIImage
+        picker.dismiss(animated: true)
+        completion?(image)
+    }
+
+    func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+        picker.dismiss(animated: true)
+    }
+}
+#endif

@@ -450,6 +450,11 @@ public final class PairingSession: ObservableObject {
 
     public var deviceName: String { DeviceIdentity.name }
 
+    /// The device this one pairs *with*. The scanner needs it to name the
+    /// right thing and to reject a code minted by the wrong role.
+    public var peerRole: DeviceRole { role.peer }
+    public var peerNoun: String { role.peer.noun }
+
     public func start() {
         guard loop == nil else { return }
         approvedLocally = false

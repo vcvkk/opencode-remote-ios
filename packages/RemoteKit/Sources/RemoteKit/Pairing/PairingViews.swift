@@ -6,12 +6,6 @@ import SwiftUI
 /// which is the entire UX ("open the app on both devices, tap approve").
 public struct PairingPhaseView: View {
     @ObservedObject var session: PairingSession
-    /// The thing to open on the other side. A Mac can pair with an iPhone
-    /// *or* another Mac now, so before anything answers it can only say
-    /// "other device"; the phone's peer is still always a Mac.
-    private var peerKind: String {
-        DeviceRole.current == .mac ? "other device" : "Mac"
-    }
 
     public init(session: PairingSession) {
         self.session = session
@@ -31,14 +25,10 @@ public struct PairingPhaseView: View {
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
             case .waitingForPeer:
-                Image(systemName: "qrcode.viewfinder")
-                    .font(.largeTitle)
-                Text("Scan the code on your \(peerKind)")
-                    .font(.headline)
-                Text("Your \(peerKind) shows a pairing code. Point the camera at it — the devices link directly over your network, no account needed.")
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-                    .font(.callout)
+                // The scanner owns this phase: it has its own framing, so it
+                // renders in place of the default VStack padding.
+                QRScannerView(session: session)
+                    .padding(.horizontal, -20)
             case let .peerFound(name, sas):
                 sasBlock(sas)
                 Text("Found **\(name)**. Make sure it shows this same code, then approve on both devices.")
